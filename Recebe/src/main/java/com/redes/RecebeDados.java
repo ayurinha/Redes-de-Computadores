@@ -47,12 +47,31 @@ public class RecebeDados extends Thread {
             Logger.getLogger(RecebeDados.class.getName()).log(Level.SEVERE, null, ex);
         }
     }
+    private void solicitaRetransmissao(int numeroSequencia){
+        try {
+            InetAddress address = InetAddress.getByName("localhost");
+            try (DatagramSocket datagramSocket = new DatagramSocket(portaLocalEnviar)) {
+                String sendString = "R" + numeroSequencia;
+                byte[] sendData = sendString.getBytes();
+                DatagramPacket packet = new DatagramPacket(sendData, sendData.length, address, portaDestino);
+                datagramSocket.send(packet);
+                System.out.println("Solicitação de retransmissão enviada para o pacote: " + numeroSequencia);
+            }
+        } catch (SocketException ex) {
+            Logger.getLogger(RecebeDados.class.getName()).log(Level.SEVERE, null, ex);
+        } catch (IOException ex) {
+            Logger.getLogger(RecebeDados.class.getName()).log(Level.SEVERE, null, ex);
+        }
+    }
 
     @Override
     public void run() {
         try {
             DatagramSocket serverSocket = new DatagramSocket(portaLocalReceber);
             byte[] receiveData = new byte[1400];
+            //iniciando o numero anterior em zero para guardar a ordem de envio
+            int numeroAnterior = 0;
+            int numeroSequencia = 0;
             try (FileOutputStream fileOutput = new FileOutputStream("saida")) {
                 boolean fim = false;
                 while (!fim) {
@@ -67,6 +86,7 @@ public class RecebeDados extends Thread {
                     Random gerador = new Random();
                     
                     valor = (gerador.nextFloat());
+
                     //se numero cair no intervalo [0, 0,6)
                     if (valor > 0.6){
                         for (int i = 0; i < tmp.length; i = i + 4) {
@@ -78,7 +98,17 @@ public class RecebeDados extends Thread {
                             }
                             fileOutput.write(dados);
                         }
-                        enviaAck(fim);
+                        //pegar o numero de sequencia para saber se o pacote ta na ordem
+                        numeroSequencia = dados[0];
+                        if (numeroSequencia !=(numeroAnterior+1)){
+                            //se nao tiver na ordem solicita retransmissao
+                            System.out.println("Pacote fora de ordem. Esperado: " + (numeroAnterior + 1) + ", Recebido: " + numeroSequencia);
+                            solicitaRetransmissao(numeroAnterior+1);
+                        }else{
+                            //se tiver envia o ack
+                            numeroAnterior = numeroSequencia;
+                            enviaAck(fim);
+                        }
                     }else{
                         System.out.println("ack perdido");
                     }

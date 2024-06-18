@@ -78,6 +78,8 @@ public class EnviaDados extends Thread {
                 //como cada int ocupa 4 Bytes, estamos lendo blocos com 350
                 //int's por vez.
                 int cont = 0;
+                //numero de sequencia para sabermos a ordem dos pacotes
+                int numeroDeSequencia = 0; 
 
                 try (FileInputStream fileInput = new FileInputStream("entrada");) {
                     int lido, id;
@@ -86,9 +88,9 @@ public class EnviaDados extends Thread {
                         //ordem = incrementa a cada pkt enviado
                         dados[cont] = lido;
 
-                        //pegando o id (numero de sequencia) de cada pkt 
-                        if (cont == 0){
-                            id = dados[cont];
+                        //define o número de sequência no início do pkt
+                        if (cont == 1){
+                            dados[0] = numeroDeSequencia++;
                         }
                         
                         cont++;
@@ -98,6 +100,7 @@ public class EnviaDados extends Thread {
                             //colocar numero de sequencia, cada pkt tem um numero de sequencia
                             //os 4 primeiros bytes vao ser o numero de sequencia
                             //ao inves de 350 a gente vai ter 349 de dados
+                            System.out.println("Enviado pkt numero " + numeroDeSequencia);
                             enviaPct(dados);
                             //guarda os dados aqui
                             cont = 0;
