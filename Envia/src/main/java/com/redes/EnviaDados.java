@@ -9,17 +9,19 @@ package com.redes;
  * @author flavio
  */
 
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.net.DatagramPacket;
-import java.net.DatagramSocket;
-import java.net.InetAddress;
-import java.net.SocketException;
-import java.nio.ByteBuffer;
-import java.nio.IntBuffer;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-import java.util.concurrent.Semaphore;
+ import java.io.FileInputStream;
+ import java.io.IOException;
+ import java.net.DatagramPacket;
+ import java.net.DatagramSocket;
+ import java.net.InetAddress;
+ import java.net.SocketException;
+ import java.nio.ByteBuffer;
+ import java.nio.IntBuffer;
+ import java.util.logging.Level;
+ import java.util.logging.Logger;
+ import java.util.concurrent.ConcurrentHashMap;
+ import java.util.concurrent.Semaphore;
+
 
 public class EnviaDados extends Thread {
 
@@ -28,6 +30,7 @@ public class EnviaDados extends Thread {
     private final int portaLocalRecebimento = 2003;
     Semaphore sem;
     private final String funcao;
+    private final ConcurrentHashMap<Integer, byte[]> pacotesEnviados = new ConcurrentHashMap<>(); // Armazena os pacotes enviados
 
     public EnviaDados(Semaphore sem, String funcao) {
         super(funcao);
@@ -39,13 +42,16 @@ public class EnviaDados extends Thread {
         return funcao;
     }
 
-    private void enviaPct(int[] dados) {
-        //converte int[] para byte[]
+    private byte[] converteParaBytes(int[] dados) {
         ByteBuffer byteBuffer = ByteBuffer.allocate(dados.length * 4);
         IntBuffer intBuffer = byteBuffer.asIntBuffer();
         intBuffer.put(dados);
+        return byteBuffer.array();
+    }
 
-        byte[] buffer = byteBuffer.array();
+    private void enviaPct(int numeroSequencia, int[] dados) {
+        byte[] buffer = converteParaBytes(dados);
+        pacotesEnviados.put(numeroSequencia, buffer);  // Armazena o pacote para possível retransmissão
 
         try {
             System.out.println("Semaforo: " + sem.availablePermits());
@@ -54,9 +60,7 @@ public class EnviaDados extends Thread {
 
             InetAddress address = InetAddress.getByName("localhost");
             try (DatagramSocket datagramSocket = new DatagramSocket(portaLocalEnvio)) {
-                DatagramPacket packet = new DatagramPacket(
-                        buffer, buffer.length, address, portaDestino);
-
+                DatagramPacket packet = new DatagramPacket(buffer, buffer.length, address, portaDestino);
                 datagramSocket.send(packet);
             }
 
@@ -64,6 +68,29 @@ public class EnviaDados extends Thread {
         } catch (SocketException ex) {
             Logger.getLogger(EnviaDados.class.getName()).log(Level.SEVERE, null, ex);
         } catch (IOException | InterruptedException ex) {
+            Logger.getLogger(EnviaDados.class.getName()).log(Level.SEVERE, null, ex);
+        }
+    }
+
+    private void retransmitePct(int numeroSequencia) {
+        byte[] buffer = pacotesEnviados.get(numeroSequencia);
+
+        if (buffer == null) {
+            System.out.println("Pacote número " + numeroSequencia + " não encontrado para retransmissão.");
+            return;
+        }
+
+        try {
+            InetAddress address = InetAddress.getByName("localhost");
+            try (DatagramSocket datagramSocket = new DatagramSocket(portaLocalEnvio)) {
+                DatagramPacket packet = new DatagramPacket(buffer, buffer.length, address, portaDestino);
+                datagramSocket.send(packet);
+            }
+
+            System.out.println("Retransmissão feita. Pacote número: " + numeroSequencia);
+        } catch (SocketException ex) {
+            Logger.getLogger(EnviaDados.class.getName()).log(Level.SEVERE, null, ex);
+        } catch (IOException ex) {
             Logger.getLogger(EnviaDados.class.getName()).log(Level.SEVERE, null, ex);
         }
     }
@@ -77,12 +104,12 @@ public class EnviaDados extends Thread {
                 //contador, para gerar pacotes com 1400 Bytes de tamanho
                 //como cada int ocupa 4 Bytes, estamos lendo blocos com 350
                 //int's por vez.
-                int cont = 0;
+                int cont = 1;
                 //numero de sequencia para sabermos a ordem dos pacotes
                 int numeroDeSequencia = 0; 
 
                 try (FileInputStream fileInput = new FileInputStream("entrada");) {
-                    int lido, id;
+                    int lido;
                     while ((lido = fileInput.read()) != -1) {
                         //dados[0] = numero de sequencia enviado
                         //ordem = incrementa a cada pkt enviado
@@ -90,7 +117,7 @@ public class EnviaDados extends Thread {
 
                         //define o número de sequência no início do pkt
                         if (cont == 1){
-                            dados[0] = numeroDeSequencia++;
+                            dados[0] = numeroDeSequencia;
                         }
                         
                         cont++;
@@ -101,9 +128,9 @@ public class EnviaDados extends Thread {
                             //os 4 primeiros bytes vao ser o numero de sequencia
                             //ao inves de 350 a gente vai ter 349 de dados
                             System.out.println("Enviado pkt numero " + numeroDeSequencia);
-                            enviaPct(dados);
-                            //guarda os dados aqui
-                            cont = 0;
+                            enviaPct(numeroDeSequencia, dados);
+                            numeroDeSequencia++;
+                            cont = 1;
                         }
                     }
 
@@ -112,7 +139,7 @@ public class EnviaDados extends Thread {
                     //o envio dos dados.
                     for (int i = cont; i < 350; i++)
                         dados[i] = -1;
-                    enviaPct(dados);
+                    enviaPct(numeroDeSequencia, dados);
                 } catch (IOException e) {
                     System.out.println("Error message: " + e.getMessage());
                 }
@@ -120,15 +147,25 @@ public class EnviaDados extends Thread {
             case "ack":
                 try {
                     DatagramSocket serverSocket = new DatagramSocket(portaLocalRecebimento);
-                    byte[] receiveData = new byte[1];
+                    // mudando o tamanho do buffer para pegar a letra equivalente e o numero de sequencia
+                    byte[] receiveData = new byte[5]; 
                     String retorno = "";
-                    while (!retorno.equals("F")) {
+                    while (true) {
                         DatagramPacket receivePacket = new DatagramPacket(receiveData, receiveData.length);
                         serverSocket.receive(receivePacket);
-                        retorno = new String(receivePacket.getData());
-                        System.out.println("Ack recebido " + retorno + ".");
-                        //se o dados[0] que eu recebo no ak
-                        sem.release();
+                        retorno = new String(receivePacket.getData(), 0, receivePacket.getLength());
+
+                        if (retorno.startsWith("A")) {
+                            System.out.println("ACK recebido " + retorno + ".");
+                            sem.release();
+                        } else if (retorno.startsWith("R")) { //se for solicitada uma retransmissao vai vir como R ai pede a retransmissao do pacote
+                            int numeroSequencia = Integer.parseInt(retorno.substring(1).trim());
+                            System.out.println("Retransmissão solicitada para o pacote " + numeroSequencia);
+                            retransmitePct(numeroSequencia);
+                        } else if (retorno.equals("F")) {
+                            System.out.println("Fim da transmissão.");
+                            break;
+                        }
                     }
                 } catch (IOException e) {
                     System.out.println("Excecao: " + e.getMessage());

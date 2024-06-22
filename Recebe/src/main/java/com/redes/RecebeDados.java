@@ -70,8 +70,7 @@ public class RecebeDados extends Thread {
             DatagramSocket serverSocket = new DatagramSocket(portaLocalReceber);
             byte[] receiveData = new byte[1400];
             //iniciando o numero anterior em zero para guardar a ordem de envio
-            int numeroAnterior = 0;
-            int numeroSequencia = 0;
+            int numeroAnterior = -1;
             try (FileOutputStream fileOutput = new FileOutputStream("saida")) {
                 boolean fim = false;
                 while (!fim) {
@@ -87,19 +86,21 @@ public class RecebeDados extends Thread {
                     
                     valor = (gerador.nextFloat());
 
+                    // Extração do número de sequência (4 primeiros bytes do tmp)
+                    int numeroSequencia = ((tmp[0] & 0xff) << 24) + ((tmp[1] & 0xff) << 16) + ((tmp[2] & 0xff) << 8) + (tmp[3] & 0xff);
+                    System.out.println("Numero de sequencia recebido " + numeroSequencia);
                     //se numero cair no intervalo [0, 0,6)
                     if (valor > 0.6){
-                        for (int i = 0; i < tmp.length; i = i + 4) {
+                        for (int i = 4; i < tmp.length; i = i + 4) {
                             int dados = ((tmp[i] & 0xff) << 24) + ((tmp[i + 1] & 0xff) << 16) + ((tmp[i + 2] & 0xff) << 8) + ((tmp[i + 3] & 0xff));
     
                             if (dados == -1) {
                                 fim = true;
                                 break;
                             }
-                            fileOutput.write(dados);
+                            fileOutput.write(dados);                            
                         }
-                        //pegar o numero de sequencia para saber se o pacote ta na ordem
-                        numeroSequencia = dados[0];
+                
                         if (numeroSequencia !=(numeroAnterior+1)){
                             //se nao tiver na ordem solicita retransmissao
                             System.out.println("Pacote fora de ordem. Esperado: " + (numeroAnterior + 1) + ", Recebido: " + numeroSequencia);
@@ -108,9 +109,11 @@ public class RecebeDados extends Thread {
                             //se tiver envia o ack
                             numeroAnterior = numeroSequencia;
                             enviaAck(fim);
+                            System.out.println("ack enviado");
                         }
                     }else{
                         System.out.println("ack perdido");
+                        solicitaRetransmissao(numeroSequencia);
                     }
                     //significa perda, logo, você não envia ACK
                     //para esse pacote, e não escreve ele no arquivo saida.
