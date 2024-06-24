@@ -30,7 +30,7 @@ public class EnviaDados extends Thread {
     private final int portaLocalRecebimento = 2003;
     Semaphore sem;
     private final String funcao;
-    private final ConcurrentHashMap<Integer, byte[]> pacotesEnviados = new ConcurrentHashMap<>(); // Armazena os pacotes enviados
+    private final ConcurrentHashMap<Integer, int[]> pacotesEnviados = new ConcurrentHashMap<>(); // Armazena os pacotes enviados
 
     public EnviaDados(Semaphore sem, String funcao) {
         super(funcao);
@@ -42,16 +42,15 @@ public class EnviaDados extends Thread {
         return funcao;
     }
 
-    private byte[] converteParaBytes(int[] dados) {
+    private synchronized byte[] converteParaBytes(int[] dados) {
         ByteBuffer byteBuffer = ByteBuffer.allocate(dados.length * 4);
         IntBuffer intBuffer = byteBuffer.asIntBuffer();
         intBuffer.put(dados);
         return byteBuffer.array();
     }
 
-    private void enviaPct(int numeroSequencia, int[] dados) {
+    private synchronized void enviaPct(int numeroSequencia, int[] dados) {
         byte[] buffer = converteParaBytes(dados);
-        pacotesEnviados.put(numeroSequencia, buffer);  // Armazena o pacote para possível retransmissão
 
         try {
             System.out.println("Semaforo: " + sem.availablePermits());
@@ -72,8 +71,11 @@ public class EnviaDados extends Thread {
         }
     }
 
-    private void retransmitePct(int numeroSequencia) {
-        byte[] buffer = pacotesEnviados.get(numeroSequencia);
+    private synchronized void retransmitePct(int numeroSequencia) {
+        
+        
+        int [] dados = pacotesEnviados.get(numeroSequencia);
+        byte[] buffer = converteParaBytes(dados);
 
         if (buffer == null) {
             System.out.println("Pacote número " + numeroSequencia + " não encontrado para retransmissão.");
@@ -127,10 +129,16 @@ public class EnviaDados extends Thread {
                             //colocar numero de sequencia, cada pkt tem um numero de sequencia
                             //os 4 primeiros bytes vao ser o numero de sequencia
                             //ao inves de 350 a gente vai ter 349 de dados
+                    
+                            pacotesEnviados.put(numeroDeSequencia, dados.clone());  // Armazena o pacote para possível retransmissão
+                            for (Integer chave : pacotesEnviados.keySet()) {
+                               System.out.println("Chave: " + chave + ", Valor: " + pacotesEnviados.get(chave));
+                            }
                             System.out.println("Enviado pkt numero " + numeroDeSequencia);
                             enviaPct(numeroDeSequencia, dados);
                             numeroDeSequencia++;
                             cont = 1;
+                            dados = new int[350]; // reinicia o array para o próximo pacote
                         }
                     }
 
@@ -139,6 +147,8 @@ public class EnviaDados extends Thread {
                     //o envio dos dados.
                     for (int i = cont; i < 350; i++)
                         dados[i] = -1;
+
+                    pacotesEnviados.put(numeroDeSequencia, dados.clone());  // Armazena o último pacote para possível retransmissão
                     enviaPct(numeroDeSequencia, dados);
                 } catch (IOException e) {
                     System.out.println("Error message: " + e.getMessage());
@@ -161,6 +171,8 @@ public class EnviaDados extends Thread {
                         } else if (retorno.startsWith("R")) { //se for solicitada uma retransmissao vai vir como R ai pede a retransmissao do pacote
                             int numeroSequencia = Integer.parseInt(retorno.substring(1).trim());
                             System.out.println("Retransmissão solicitada para o pacote " + numeroSequencia);
+                            boolean contemChave = pacotesEnviados.containsKey(numeroSequencia);
+                            System.out.println("Contém chave" + numeroSequencia + "? " + contemChave);
                             retransmitePct(numeroSequencia);
                         } else if (retorno.equals("F")) {
                             System.out.println("Fim da transmissão.");
