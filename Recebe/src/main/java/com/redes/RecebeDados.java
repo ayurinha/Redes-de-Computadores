@@ -27,12 +27,12 @@ public class RecebeDados extends Thread {
     float valor;
 
 
-    private void enviaAck(boolean fim) {
+    private void enviaAck(boolean fim, int numeroSequencia) {
 
         try {
             InetAddress address = InetAddress.getByName("localhost");
             try (DatagramSocket datagramSocket = new DatagramSocket(portaLocalEnviar)) {
-                String sendString = fim ? "F" : "A";
+                String sendString = fim ? "F" : "A" + numeroSequencia;
 
                 byte[] sendData = sendString.getBytes();
 
@@ -108,7 +108,7 @@ public class RecebeDados extends Thread {
                         }else{
                             //se tiver envia o ack
                             numeroAnterior = numeroSequencia;
-                            enviaAck(fim);
+                            enviaAck(fim, numeroSequencia);
                             System.out.println("ack enviado");
                         }
                     }else{
