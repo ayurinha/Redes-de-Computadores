@@ -34,11 +34,11 @@ public class EnviaDados extends Thread {
     private final String funcao;
     private final ConcurrentHashMap<Integer, int[]> pacotesEnviados = new ConcurrentHashMap<>(); // Armazena os pacotes enviados
     private int sendBase;
-    private int N; // Tamanho da janela
+    private int N; // tamanho da janela
     private boolean timerRunning;
     private Timer timer;
-    private long timeoutInterval; // Intervalo de timeout em milissegundos
-    private boolean timeoutOccurred;
+    private long timeoutInterval; // intervalo de timeout em milissegundos
+    private boolean timeoutOccurred; 
     private int numeroDeSequencia;
     private int[] dados = new int[350]; // Array de inteiros longos
 
@@ -80,6 +80,8 @@ public class EnviaDados extends Thread {
             Logger.getLogger(EnviaDados.class.getName()).log(Level.SEVERE, null, ex);
         } catch (IOException | InterruptedException ex) {
             Logger.getLogger(EnviaDados.class.getName()).log(Level.SEVERE, null, ex);
+        } finally {
+            sem.release();
         }
     }
 
@@ -88,28 +90,37 @@ public class EnviaDados extends Thread {
         byte[] buffer = converteParaBytes(dados);
 
         if (buffer == null) {
-            System.out.println("Pacote número " + numeroSequencia + " não encontrado para retransmissão.");
+            System.out.println("Pacote número " + numeroSequencia + " não encontrado");
             return;
         }
 
         try {
+            System.out.println("Semaforo: " + sem.availablePermits());
+            sem.acquire();
+            System.out.println("Semaforo: " + sem.availablePermits());
+    
             InetAddress address = InetAddress.getByName("localhost");
             try (DatagramSocket datagramSocket = new DatagramSocket(portaLocalEnvio)) {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length, address, portaDestino);
                 datagramSocket.send(packet);
             }
-
-            System.out.println("Retransmissão feita. Pacote número: " + numeroSequencia);
+    
+            System.out.println("Retransmissão feita do pacote " + numeroSequencia);
         } catch (SocketException ex) {
             Logger.getLogger(EnviaDados.class.getName()).log(Level.SEVERE, null, ex);
         } catch (IOException ex) {
             Logger.getLogger(EnviaDados.class.getName()).log(Level.SEVERE, null, ex);
+        } catch (InterruptedException ex) {
+            Logger.getLogger(EnviaDados.class.getName()).log(Level.SEVERE, null, ex);
+            Thread.currentThread().interrupt(); 
+        } finally {
+            sem.release();
         }
     }
 
 
     private void startTimer() {
-        stopTimer(); // Parar qualquer temporizador existente
+        stopTimer(); // para qualquer temporizador existente
         timerRunning = true;
         timeoutOccurred = false;
         timer = new Timer();
@@ -121,7 +132,7 @@ public class EnviaDados extends Thread {
                 retransmitirPacotesPendentes();
             }
         }, timeoutInterval);
-        System.out.println("Temporizador iniciado");
+        System.out.println("Timer iniciado");
     }
 
     private void stopTimer() {
@@ -130,19 +141,24 @@ public class EnviaDados extends Thread {
             timer = null;
         }
         timerRunning = false;
-        System.out.println("Temporizador parado");
+        System.out.println("Timer parado");
     }
 
     private void retransmitirPacotesPendentes() {
-        
+        boolean pacotesRetransmitidos = false;
+
         for (int i = sendBase; i < numeroDeSequencia; i++) {
-            
             int[] dadosPerdidos = pacotesEnviados.get(i);
             if (dadosPerdidos != null) {
                 retransmitePct(i, dadosPerdidos);
+                pacotesRetransmitidos = true;
             } else {
-                System.out.println("Pacote número " + i + " não encontrado para retransmissão.");
+                System.out.println("Pacote número " + i + " não encontrado");
             }
+        }
+
+        if (pacotesRetransmitidos) {
+            startTimer(); // Reinicia o temporizador após retransmitir pacotes
         }
     }
 
@@ -155,10 +171,10 @@ public class EnviaDados extends Thread {
                 //contador, para gerar pacotes com 1400 Bytes de tamanho
                 //como cada int ocupa 4 Bytes, estamos lendo blocos com 350
                 //int's por vez.
-                int cont = 1;
+                int cont = 0;
                 //numero de sequencia para sabermos a ordem dos pacotes
                 numeroDeSequencia = 0; 
-                this.N = 3;
+                this.N = 4;
                 this.sendBase = 0;
                 this.timerRunning = false;
             
@@ -168,8 +184,8 @@ public class EnviaDados extends Thread {
                     int lido;
                     while ((lido = fileInput.read()) != -1) {
                         //dados[0] = numero de sequencia enviado
-                        //ordem = incrementa a cada pkt enviado
-                        dados[cont] = lido;
+                        
+                        dados[cont+1] = lido;
 
                         //define o número de sequência no início do pkt
                         if (cont == 1){
@@ -177,7 +193,7 @@ public class EnviaDados extends Thread {
                         }
                         
                         cont++;
-                        if (cont == 350) {
+                        if (cont == 349) {
                             //envia pacotes a cada 350 int's lidos.
                             //ou seja, 1400 Bytes.
                             //colocar numero de sequencia, cada pkt tem um numero de sequencia
@@ -191,7 +207,7 @@ public class EnviaDados extends Thread {
                                     startTimer();
                                 }
                                 numeroDeSequencia++;
-                                cont = 1;
+                                cont = 0;
                                 dados = new int[350];
                             }
 
@@ -202,7 +218,7 @@ public class EnviaDados extends Thread {
                     //ultimo pacote eh preenchido com
                     //-1 ate o fim, indicando que acabou
                     //o envio dos dados.
-                    for (int i = cont; i < 350; i++)
+                    for (int i = cont+1; i < 350; i++)
                         dados[i] = -1;
 
                     pacotesEnviados.put(numeroDeSequencia, dados.clone());  // Armazena o último pacote para possível retransmissão
@@ -218,6 +234,7 @@ public class EnviaDados extends Thread {
                     // mudando o tamanho do buffer para pegar a letra equivalente e o numero de sequencia
                     byte[] receiveData = new byte[5]; 
                     String retorno = "";
+                    int ackTotal = -1;
                     while (true) {
                         DatagramPacket receivePacket = new DatagramPacket(receiveData, receiveData.length);
                         serverSocket.receive(receivePacket);
@@ -226,7 +243,8 @@ public class EnviaDados extends Thread {
 
                         if (retorno.startsWith("A")) {
                             int ackNum = Integer.parseInt(retorno.substring(1).trim());
-                            System.out.println("ACK " + ackNum + " recebido.");
+                            ackTotal = ackTotal +1;
+                            System.out.println("ACK " + ackTotal + " recebido.");
                             if (ackNum >= sendBase) {
                                 sendBase = ackNum + 1;
                                 if (sendBase == numeroDeSequencia) {
@@ -238,14 +256,23 @@ public class EnviaDados extends Thread {
                             sem.release();
                         } else if (retorno.startsWith("R")) { //se for solicitada uma retransmissao vai vir como R ai pede a retransmissao do pacote
                             int numeroSequencia = Integer.parseInt(retorno.substring(1).trim());
-                            System.out.println("Retransmissão solicitada para o pacote " + numeroSequencia);
+                            System.out.println("Retransmissão solicitada para pacote " + numeroSequencia);
                             
                             //boolean contemChave = pacotesEnviados.containsKey(numeroSequencia);
-                            //System.out.println("Contém chave" + numeroSequencia + "? " + contemChave);
+                            //System.out.println("Sendbase: " + sendBase + " Numero de sequencia: " + numeroSequencia);
                             //int [] dadosPerdidos = pacotesEnviados.get(numeroSequencia);
                             //enviaPct(numeroSequencia, dadosPerdidos);
-                            //retransmitePct(numeroSequencia);
-                            retransmitirPacotesPendentes();
+                            //retransmitePct(numeroSequencia, dadosPerdidos);
+                            //sendBase = numeroSequencia - 1;
+                            if (numeroSequencia < numeroDeSequencia) {
+                                int[] dadosPerdidos = pacotesEnviados.get(numeroSequencia);
+                                if (dadosPerdidos != null) {
+                                    retransmitirPacotesPendentes();
+                                    startTimer();
+                                } else {
+                                    System.out.println("Pacote número " + numeroSequencia + " não encontrado");
+                                }
+                            }
                         } else if (retorno.equals("F")) {
                             System.out.println("Fim da transmissão.");
                             break;
